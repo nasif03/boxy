@@ -1,0 +1,32 @@
+#version 460 core
+layout (location = 0) in uint a_data;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+const vec3 CUBE_OFFSETS[6 * 4] = vec3[24](
+    vec3(0.5, -0.5,  0.5), vec3(0.5,  0.5,  0.5), vec3(0.5,  0.5, -0.5), vec3(0.5, -0.5, -0.5),  	// +X (Right)
+    vec3(-0.5, -0.5, -0.5), vec3(-0.5,  0.5, -0.5), vec3(-0.5,  0.5,  0.5), vec3(-0.5, -0.5,  0.5), // -X (Left)
+    vec3(-0.5,  0.5,  0.5), vec3( 0.5,  0.5,  0.5), vec3( 0.5,  0.5, -0.5), vec3(-0.5,  0.5, -0.5), // +Y (Top)
+    vec3(-0.5, -0.5, -0.5), vec3( 0.5, -0.5, -0.5), vec3( 0.5, -0.5,  0.5), vec3(-0.5, -0.5,  0.5), // -Y (Bottom)
+    vec3( 0.5, -0.5,  0.5), vec3(-0.5, -0.5,  0.5), vec3(-0.5,  0.5,  0.5), vec3( 0.5,  0.5,  0.5), // +Z (Front)
+    vec3( 0.5,  0.5, -0.5), vec3(-0.5,  0.5, -0.5), vec3(-0.5, -0.5, -0.5), vec3( 0.5, -0.5, -0.5)  // -Z (Back)
+);
+
+out float height;
+
+void main() {
+	uint x   = (a_data) & 0x0F;
+	uint y   = (a_data >> 4) & 0xFF;
+	uint z   = (a_data >> 12) & 0x0F;
+	uint dir = (a_data >> 16) & 0x07;
+	uint idx = (a_data >> 19) & 0x03;
+
+	vec3 block_pos = vec3(float(x), float(y), float(z));
+	vec3 pos = block_pos + CUBE_OFFSETS[dir * 4 + idx];
+
+	vec4 temp = model * vec4(pos, 1.0);
+	gl_Position = projection * view * temp;
+	height = temp.y;
+}
