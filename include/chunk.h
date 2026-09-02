@@ -1,7 +1,7 @@
 #ifndef CHUNK_H
 #define CHUNK_H
 
-enum block_type : uint8_t {
+enum voxel_type : uint8_t {
     AIR,
     GRASS,
     STONE,
@@ -24,7 +24,7 @@ struct vertex {
 };
 
 struct chunk {
-    std::vector<block_type> voxels;
+    std::vector<voxel_type> voxels;
     std::vector<vertex> mesh;
     int x, z;
     unsigned int vao = 0;
@@ -38,7 +38,7 @@ struct chunk_task {
 };
 
 struct chunk_result {
-    std::vector<block_type> voxels;
+    std::vector<voxel_type> voxels;
     std::vector<vertex> mesh;
     int x, z;
 };
@@ -61,10 +61,10 @@ template <typename T> struct safe_queue {
 
 void get_chunk_coord(int x, int z, int &cx, int &cz);
 void get_mod_chunk_coord(int x, int z, int &xmod, int &zmod);
-int get_voxel_indexx(int x, int y, int z);
-void chunk_init_voxels(std::vector<block_type> &voxels, int cx, int cz);
+int get_voxel_index(int x, int y, int z);
+void chunk_init_voxels(std::vector<voxel_type> &voxels, int cx, int cz);
 void chunk_quad_add(std::vector<vertex> &mesh, int x, int y, int z, int dir);
-void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<block_type> &voxels, int cx, int cz);
+void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<voxel_type> &voxels, int cx, int cz);
 void chunk_send_to_gpu(chunk &c);
 void chunk_delete(chunk &c);
 void chunk_draw(chunk &c, shader &s);
@@ -74,16 +74,32 @@ void chunk_worker_loop(int thread_id);
 
 #ifdef CHUNK_IMPLEMENTATION
 
+voxel_type get_voxel_type(int x, int y, int z) {
+    if (y < 0 || y >= CHUNK_HEIGHT) return AIR;
+
+    int cx, cz, cxmod, czmod;
+    get_chunk_coord(x, z, cx, cz);
+    get_mod_chunk_coord(cx, cz, cxmod, czmod);
+
+    x = (x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    z = (z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    if (world[cxmod][czmod].voxels.empty()) return AIR;
+    return world[cxmod][czmod].voxels[get_voxel_index(x, y, z)];
+}
+
 int get_voxel_index(int x, int y, int z) {
     return x * CHUNK_SIZE * CHUNK_HEIGHT + y * CHUNK_SIZE + z;
 }
 
-void chunk_init_voxels(std::vector<block_type> &voxels, int cx, int cz) {
+void chunk_init_voxels(std::vector<voxel_type> &voxels, int cx, int cz) {
     voxels.resize(CHUNK_SIZE * CHUNK_HEIGHT * CHUNK_SIZE);
+    
+    const int min_height = 64;
+    const int max_terrain_height = 128;
     for (int x = 0; x < CHUNK_SIZE; x++) {
         for (int z = 0; z < CHUNK_SIZE; z++) {
-            int noise_val = (int)(fnlGetNoise2D(&terrain_noise, x + cx * CHUNK_SIZE, z + cz * CHUNK_SIZE) * 64);
-            int height = CHUNK_HEIGHT / 4 + noise_val;
+            int terrain_height = (int)((fnlGetNoise2D(&terrain_noise, x + cx * CHUNK_SIZE, z + cz * CHUNK_SIZE) + 1.0f) / 2.0f * max_terrain_height);
+            int height = min_height + terrain_height;
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 if (y < height) voxels[get_voxel_index(x, y, z)] = STONE;
                 else voxels[get_voxel_index(x, y, z)] = AIR;
@@ -108,7 +124,7 @@ void chunk_quad_add(std::vector<vertex> &mesh, int x, int y, int z, int dir) {
     mesh.push_back(v[0]);
 }
 
-void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<block_type> &voxels, int cx, int cz) {
+void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<voxel_type> &voxels, int cx, int cz) {
     // create mesh from voxel values
     for (int x = 0; x < CHUNK_SIZE; x++) {
         for (int y = 0; y < CHUNK_HEIGHT; y++) {
@@ -141,7 +157,7 @@ void chunk_send_to_gpu(chunk &c) {
     
     glEnableVertexAttribArray(0);
     // glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void *)0);
-    glVertexAttribIPointer(0, 1, GL_INT, sizeof(vertex), (void *)0);
+    glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, sizeof(vertex), (void *)0);
     c.state = READY;
 }
 

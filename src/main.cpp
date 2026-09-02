@@ -44,7 +44,7 @@ float last_frame = 0.0f;
 
 float last_x = SCR_WIDTH / 2.0f, last_y = SCR_HEIGHT / 2.0f;
 bool first_mouse = true;
-camera player_cam(glm::vec3(0.0f, 100.0f, 0.0f));
+camera player_cam(glm::vec3(0.0f, 150.0f, 0.0f));
 
 // callbacks
 
@@ -107,6 +107,9 @@ int main() {
         return -1;
     }
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
     
     #pragma endregion
     
@@ -129,7 +132,6 @@ int main() {
             get_mod_chunk_coord(x, z, xmod, zmod);
             chunk &c = world[xmod][zmod];
             c.x = x, c.z = z;
-            c.state = IN_QUEUE;
             chunk_tasks.push({x, z});
         }
     }
@@ -191,11 +193,8 @@ int main() {
             for (int z = 0; z < WORLD_SIZE; z++) {
                 chunk &c = world[x][z];
                 if (c.state == DIRTY) {
-                    {
-                        std::lock_guard<std::mutex> lock(chunk_tasks.mtx);
-                        c.state = IN_QUEUE;
-                        chunk_tasks.q.push({c.x, c.z});
-                    }
+                    c.state = IN_QUEUE;
+                    chunk_tasks.push({c.x, c.z});
                 }
             }
         }
