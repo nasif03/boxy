@@ -14,7 +14,7 @@ const vec3 CUBE_OFFSETS[6 * 4] = vec3[24](
     vec3( 0.5,  0.5, -0.5), vec3(-0.5,  0.5, -0.5), vec3(-0.5, -0.5, -0.5), vec3( 0.5, -0.5, -0.5)  // -Z (Back)
 );
 
-out float height;
+out uint face_dir;
 
 void main() {
 	uint x   = (a_data) & 0x0F;
@@ -26,7 +26,6 @@ void main() {
 	vec3 block_pos = vec3(float(x), float(y), float(z));
 	vec3 pos = block_pos + CUBE_OFFSETS[dir * 4 + idx];
 
-	vec4 temp = model * vec4(pos, 1.0);
-	gl_Position = projection * view * temp;
-	height = temp.y;
+	gl_Position = projection * view * model * vec4(pos, 1.0);
+	face_dir = dir;
 }
