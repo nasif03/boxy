@@ -59,9 +59,8 @@ template <typename T> struct safe_queue {
     }
 };
 
-void get_chunk_coord(int x, int z, int &cx, int &cz);
-void get_mod_chunk_coord(int x, int z, int &xmod, int &zmod);
-int get_voxel_index(int x, int y, int z);
+void chunk_get_coord(int x, int z, int &cx, int &cz);
+void chunk_get_coord_mod(int x, int z, int &xmod, int &zmod);
 void chunk_init_voxels(std::vector<voxel_type> &voxels, int cx, int cz);
 void chunk_quad_add(std::vector<vertex> &mesh, int x, int y, int z, int dir);
 void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<voxel_type> &voxels, int cx, int cz);
@@ -70,25 +69,104 @@ void chunk_delete(chunk &c);
 void chunk_draw(chunk &c, shader &s);
 void chunk_worker_loop(int thread_id);
 
+int voxel_get_index(int x, int y, int z);
+int voxel_get_index(glm::ivec3 pos);
+void voxel_place(int x, int y, int z);
+void voxel_place(glm::ivec3 pos);
+voxel_type voxel_get_type(int x, int y, int z);
+voxel_type voxel_get_type(glm::ivec3 pos);
+bool get_voxel_from_raycast(glm::ivec3 &res, glm::vec3 &normal, float max_dist);
+
 #endif /* CHUNK_H */
 
 #ifdef CHUNK_IMPLEMENTATION
 
-voxel_type get_voxel_type(int x, int y, int z) {
+void voxel_place(glm::ivec3 pos) {
+    int cx, cz, cxmod, czmod;
+    chunk_get_coord(pos.x, pos.z, cx, cz);
+    chunk_get_coord_mod(cx, cz, cxmod, czmod);
+
+    pos.x = (pos.x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    pos.z = (pos.z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
+    chunk &c = world[cxmod][czmod];
+    c.voxels[voxel_get_index(pos)] = STONE;
+    c.state = DIRTY;
+}
+
+voxel_type voxel_get_type(int x, int y, int z) {
     if (y < 0 || y >= CHUNK_HEIGHT) return AIR;
 
     int cx, cz, cxmod, czmod;
-    get_chunk_coord(x, z, cx, cz);
-    get_mod_chunk_coord(cx, cz, cxmod, czmod);
+    chunk_get_coord(x, z, cx, cz);
+    chunk_get_coord_mod(cx, cz, cxmod, czmod);
 
     x = (x % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
     z = (z % CHUNK_SIZE + CHUNK_SIZE) % CHUNK_SIZE;
     if (world[cxmod][czmod].voxels.empty()) return AIR;
-    return world[cxmod][czmod].voxels[get_voxel_index(x, y, z)];
+    return world[cxmod][czmod].voxels[voxel_get_index(x, y, z)];
 }
 
-int get_voxel_index(int x, int y, int z) {
+voxel_type voxel_get_type(glm::ivec3 pos) {
+    return voxel_get_type(pos.x, pos.y, pos.z);
+}
+
+bool get_voxel_from_raycast(glm::ivec3 &res, glm::vec3 &normal, float max_dist = 10.0f) {
+    glm::vec3 dir = player_cam.front;
+    glm::vec3 start = player_cam.pos;
+
+    glm::ivec3 step = glm::sign(dir);
+    glm::ivec3 pos = glm::ivec3(glm::floor(start));
+    
+    const double eps = 1e-9;
+    if (abs(dir.x) < eps) dir.x = eps;
+    if (abs(dir.y) < eps) dir.y = eps;
+    if (abs(dir.z) < eps) dir.z = eps;
+    
+    glm::vec3 delta = glm::abs(glm::vec3(1.0f / dir.x, 1.0f / dir.y, 1.0f / dir.z));
+    glm::vec3 fract = start - glm::floor(start);
+
+    glm::vec3 tmax = glm::vec3(
+        (dir.x > 0.0f ? 1.0f - fract.x : fract.x) * delta.x,
+        (dir.y > 0.0f ? 1.0f - fract.y : fract.y) * delta.y,
+        (dir.z > 0.0f ? 1.0f - fract.z : fract.z) * delta.z
+    );
+
+    float dist = 0.0f;
+    glm::vec3 last_move = glm::vec3(0.0f);
+
+    while (dist < max_dist) {
+        if (voxel_get_type(pos) != AIR) {
+            res = pos;
+            normal = -glm::normalize(last_move);
+            return true;
+        }
+
+        if (tmax.x < tmax.y && tmax.x < tmax.z) {
+            pos.x += step.x;
+            dist = tmax.x;
+            tmax.x += delta.x;
+            last_move = glm::vec3(step.x, 0, 0);
+        } else if (tmax.y < tmax.z) {
+            pos.y += step.y;
+            dist = tmax.y;
+            tmax.y += delta.y;
+            last_move = glm::vec3(0, step.y, 0);
+        } else {
+            pos.z += step.z;
+            dist = tmax.z;
+            tmax.z += delta.z;
+            last_move = glm::vec3(0, step.z, 0);
+        }
+    }
+    return false;
+}
+
+int voxel_get_index(int x, int y, int z) {
     return x * CHUNK_SIZE * CHUNK_HEIGHT + y * CHUNK_SIZE + z;
+}
+
+int voxel_get_index(glm::ivec3 pos) {
+    return voxel_get_index(pos.x, pos.y, pos.z);
 }
 
 void chunk_init_voxels(std::vector<voxel_type> &voxels, int cx, int cz) {
@@ -101,8 +179,8 @@ void chunk_init_voxels(std::vector<voxel_type> &voxels, int cx, int cz) {
             int terrain_height = (int)((fnlGetNoise2D(&terrain_noise, x + cx * CHUNK_SIZE, z + cz * CHUNK_SIZE) + 1.0f) / 2.0f * max_terrain_height);
             int height = min_height + terrain_height;
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
-                if (y < height) voxels[get_voxel_index(x, y, z)] = STONE;
-                else voxels[get_voxel_index(x, y, z)] = AIR;
+                if (y < height) voxels[voxel_get_index(x, y, z)] = STONE;
+                else voxels[voxel_get_index(x, y, z)] = AIR;
             }
         }
     }
@@ -129,7 +207,7 @@ void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<voxel_type> &voxel
     for (int x = 0; x < CHUNK_SIZE; x++) {
         for (int y = 0; y < CHUNK_HEIGHT; y++) {
             for (int z = 0; z < CHUNK_SIZE; z++) {
-                if (voxels[get_voxel_index(x, y, z)] == AIR) continue;
+                if (voxels[voxel_get_index(x, y, z)] == AIR) continue;
 
                 for (int dir = 0; dir < 6; dir++) {
                     int x1 = x + dx[dir];
@@ -138,7 +216,7 @@ void chunk_create_mesh(std::vector<vertex> &mesh, std::vector<voxel_type> &voxel
 
                     if (x1 < 0 || x1 >= CHUNK_SIZE || y1 < 0 || y1 >= CHUNK_HEIGHT || z1 < 0 || z1 >= CHUNK_SIZE) {
                         chunk_quad_add(mesh, x, y, z, dir);
-                    } else if (voxels[get_voxel_index(x1, y1, z1)] == AIR) {
+                    } else if (voxels[voxel_get_index(x1, y1, z1)] == AIR) {
                         chunk_quad_add(mesh, x, y, z, dir);
                     }
                 }
@@ -184,14 +262,14 @@ void chunk_draw(chunk &c, shader &s) {
     glDrawArrays(GL_TRIANGLES, 0, c.vertex_count);
 }
 
-void get_chunk_coord(int x, int z, int &cx, int &cz) {
+void chunk_get_coord(int x, int z, int &cx, int &cz) {
     cx = x / CHUNK_SIZE;
     cz = z / CHUNK_SIZE;
     if (x < 0) cx--;
     if (z < 0) cz--;
 }
 
-void get_mod_chunk_coord(int x, int z, int &xmod, int &zmod) {
+void chunk_get_coord_mod(int x, int z, int &xmod, int &zmod) {
     xmod = (x % WORLD_SIZE + WORLD_SIZE) % WORLD_SIZE;
     zmod = (z % WORLD_SIZE + WORLD_SIZE) % WORLD_SIZE;
 }

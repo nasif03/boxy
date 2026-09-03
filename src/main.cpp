@@ -8,6 +8,7 @@
 #include <vector>
 #include <queue>
 #include <unordered_map>
+#include <algorithm>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -23,8 +24,8 @@
 
 // constants
 
-const int SCR_WIDTH     =   1920;
-const int SCR_HEIGHT    =   1080;
+const int SCR_WIDTH     =   900;
+const int SCR_HEIGHT    =   900;
 
 const int CHUNK_SIZE    =     16;
 const int CHUNK_HEIGHT  =    256;
@@ -51,6 +52,7 @@ camera player_cam(glm::vec3(0.0f, 150.0f, 0.0f));
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 void process_input(GLFWwindow *window);
 
 // terrain gen
@@ -69,6 +71,9 @@ void terrain_noise_init(int seed) {
 
 std::vector<std::vector<chunk>> world(WORLD_SIZE,
 std::vector<chunk>(WORLD_SIZE));
+
+glm::ivec3 block_facing;
+glm::vec3 block_facing_n;
 
 safe_queue<chunk_task> chunk_tasks;
 safe_queue<chunk_result> chunk_results;
@@ -97,6 +102,7 @@ int main() {
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetCursorPosCallback(window, mouse_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
     glfwSetScrollCallback(window, scroll_callback);
     
     // glad : load all function pointers
@@ -125,15 +131,26 @@ int main() {
     terrain_noise_init(42069);
     
     int chunk_x, chunk_z;
-    get_chunk_coord(player_cam.pos.x, player_cam.pos.z, chunk_x, chunk_z);
+    std::vector<glm::ivec2> start_chunk_positions;
+    chunk_get_coord(player_cam.pos.x, player_cam.pos.z, chunk_x, chunk_z);
     for (int x = chunk_x - WORLD_SIZE / 2; x < chunk_x + WORLD_SIZE / 2; x++) {
         for (int z = chunk_z - WORLD_SIZE / 2; z < chunk_z + WORLD_SIZE / 2; z++) {
             int xmod, zmod;
-            get_mod_chunk_coord(x, z, xmod, zmod);
+            chunk_get_coord_mod(x, z, xmod, zmod);
             chunk &c = world[xmod][zmod];
             c.x = x, c.z = z;
-            chunk_tasks.push({x, z});
+            c.state = IN_QUEUE;
+            start_chunk_positions.push_back({x, z});
+            // chunk_tasks.push({x, z});
         }
+    }
+
+    std::sort(start_chunk_positions.begin(), start_chunk_positions.end(),
+    [](const glm::ivec2 &a, const glm::ivec2 &b) {
+        return (a.x * a.x + a.y * a.y) < (b.x * b.x + b.y * b.y);
+    });
+    for (auto pos : start_chunk_positions) {
+        chunk_tasks.push({pos.x, pos.y});
     }
 
     // create worker threads
@@ -163,7 +180,7 @@ int main() {
         int chunks_sent_to_gpu = 0;
         while (chunks_sent_to_gpu < 2 && chunk_results.pop(result)) {
             int xmod, zmod;
-            get_mod_chunk_coord(result.x, result.z, xmod, zmod);
+            chunk_get_coord_mod(result.x, result.z, xmod, zmod);
             
             chunk &c = world[xmod][zmod];
             c.x = result.x, c.z = result.z;
@@ -173,13 +190,12 @@ int main() {
             chunk_send_to_gpu(c);
             chunks_sent_to_gpu++;
         }
-    
 
-        get_chunk_coord(player_cam.pos.x, player_cam.pos.z, chunk_x, chunk_z);
+        chunk_get_coord(player_cam.pos.x, player_cam.pos.z, chunk_x, chunk_z);
         for (int x = chunk_x - WORLD_SIZE / 2; x < chunk_x + WORLD_SIZE / 2; x++) {
             for (int z = chunk_z - WORLD_SIZE / 2; z < chunk_z + WORLD_SIZE / 2; z++) {
                 int xmod, zmod;
-                get_mod_chunk_coord(x, z, xmod, zmod);
+                chunk_get_coord_mod(x, z, xmod, zmod);
                 chunk &c = world[xmod][zmod];
                 if (c.state == DIRTY || c.state == IN_QUEUE) continue;
                 if (c.x != x || c.z != z) {
@@ -197,6 +213,11 @@ int main() {
                     chunk_tasks.push({c.x, c.z});
                 }
             }
+        }
+
+        
+        if (get_voxel_from_raycast(block_facing, block_facing_n)) {
+            std::cout << block_facing.x << ' ' << block_facing.y << ' ' << block_facing.z << '\n';
         }
 
         // render
@@ -249,6 +270,11 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     last_x = x;
     last_y = y;
     camera_process_mouse(player_cam, xoffset, yoffset);
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT)
+        voxel_place(block_facing);
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
